@@ -3,10 +3,11 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import os
 import asyncio
 import aiohttp
-import urllib.robotparser as robotparser # Corrected import
+import urllib.robotparser as robotparser
 from urllib.parse import urlparse, urljoin, urldefrag
-from bs4 import BeautifulSoup
-import re # Import regex for URL normalization
+from bs4 import BeautifulSoup, Comment
+import re
+import json
 
 
 # A simple class to integrate asyncio with Tkinter
@@ -35,9 +36,9 @@ class TkinterAsyncio:
 
         except Exception as e:
             # Handle exceptions that occur in the asyncio loop
-            print(f"Asyncio loop exception: {e}") # Log or handle the error appropriately
+            print(f"Asyncio loop exception: {e}")
             # Consider stopping the crawl if a critical error occurs in the loop
-            # self.root.after_idle(self.parent_gui.stop_crawl) # If you add a parent reference
+            # self.root.after_idle(self.parent_gui.stop_crawl)
 
         # Schedule the next run of the asyncio loop after a small delay
         self.root.after(1, self._run_until_exception)
@@ -52,16 +53,29 @@ class TkinterAsyncio:
 class RobotsTxtCrawlerGUI:
     def __init__(self, master):
         self.master = master
-        master.title("robots.txt Crawler")
+        master.title("robots.txt Crawler & Data Collector")
 
         # --- Configuration Variables ---
         self.start_url_var = tk.StringVar()
         self.depth_var = tk.StringVar(master)
         self.delay_var = tk.DoubleVar(value=1.0)
         self.user_agent_var = tk.StringVar(value="SimpleRobotsTxtCrawler/1.0")
-        self.output_dir_var = tk.StringVar(value="robots_txt_files")
-        # Create the default directory immediately
+        self.output_dir_var = tk.StringVar(value="crawled_data")
         os.makedirs(self.output_dir_var.get(), exist_ok=True)
+
+        # --- Data Collection Checkbox Variables ---
+        self.collect_h2_var = tk.BooleanVar(value=True) # Default to True
+        self.collect_h3_var = tk.BooleanVar(value=True)
+        self.collect_paragraphs_var = tk.BooleanVar(value=False) # Default to False
+        self.collect_images_var = tk.BooleanVar(value=True)
+        self.collect_forms_var = tk.BooleanVar(value=True)
+        self.collect_comments_var = tk.BooleanVar(value=False)
+        self.collect_meta_tags_var = tk.BooleanVar(value=True)
+        self.collect_script_sources_var = tk.BooleanVar(value=True)
+        self.collect_stylesheet_sources_var = tk.BooleanVar(value=True)
+        self.collect_canonical_url_var = tk.BooleanVar(value=True)
+        self.collect_favicon_urls_var = tk.BooleanVar(value=True)
+
 
         # --- Input Fields ---
         ttk.Label(master, text="Starting URL:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
@@ -78,30 +92,54 @@ class RobotsTxtCrawlerGUI:
         ttk.Label(master, text="User-Agent:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
         ttk.Entry(master, width=50, textvariable=self.user_agent_var).grid(row=3, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(master, text="Save robots.txt to:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(master, text="Save data to:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
         ttk.Entry(master, width=50, textvariable=self.output_dir_var).grid(row=4, column=1, padx=5, pady=5, sticky="ew")
         ttk.Button(master, text="Browse", command=self.browse_directory).grid(row=4, column=2, padx=5, pady=5, sticky="w")
 
+        # --- Data Collection Checkboxes Frame ---
+        checkbox_frame = ttk.LabelFrame(master, text="Collect Data Options")
+        checkbox_frame.grid(row=5, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
+
+        # Place checkboxes within the frame (adjust grid layout as needed)
+        ttk.Checkbutton(checkbox_frame, text="H2 Tags", variable=self.collect_h2_var).grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="H3 Tags", variable=self.collect_h3_var).grid(row=0, column=1, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Paragraphs", variable=self.collect_paragraphs_var).grid(row=0, column=2, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Images", variable=self.collect_images_var).grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Forms", variable=self.collect_forms_var).grid(row=1, column=1, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Comments", variable=self.collect_comments_var).grid(row=1, column=2, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Meta Tags", variable=self.collect_meta_tags_var).grid(row=2, column=0, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Script Sources", variable=self.collect_script_sources_var).grid(row=2, column=1, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Stylesheet Sources", variable=self.collect_stylesheet_sources_var).grid(row=2, column=2, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Canonical URL", variable=self.collect_canonical_url_var).grid(row=3, column=0, padx=5, pady=2, sticky="w")
+        ttk.Checkbutton(checkbox_frame, text="Favicon URLs", variable=self.collect_favicon_urls_var).grid(row=3, column=1, padx=5, pady=2, sticky="w")
+
+        # Configure checkbox frame columns to expand
+        checkbox_frame.grid_columnconfigure(0, weight=1)
+        checkbox_frame.grid_columnconfigure(1, weight=1)
+        checkbox_frame.grid_columnconfigure(2, weight=1)
+
+
         # --- Buttons ---
         self.start_button = ttk.Button(master, text="Start Crawling", command=self.start_crawl)
-        self.start_button.grid(row=5, column=0, columnspan=2, pady=10)
+        self.start_button.grid(row=6, column=0, columnspan=2, pady=10) # Adjusted row
         self.stop_button = ttk.Button(master, text="Stop Crawling", command=self.stop_crawl, state=tk.DISABLED)
-        self.stop_button.grid(row=6, column=0, columnspan=2, pady=5)
+        self.stop_button.grid(row=7, column=0, columnspan=2, pady=5) # Adjusted row
 
         # --- Progress Bar ---
         self.progress = ttk.Progressbar(master, orient=tk.HORIZONTAL, length=300, mode='determinate')
-        self.progress.grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.progress.grid(row=8, column=0, columnspan=2, padx=5, pady=5, sticky="ew") # Adjusted row
         self.progress["value"] = 0
         self.progress["maximum"] = 100 # Will be updated dynamically
 
         # --- Status Display ---
-        ttk.Label(master, text="Status:").grid(row=8, column=0, padx=5, pady=5, sticky="nw")
+        ttk.Label(master, text="Status:").grid(row=9, column=0, padx=5, pady=5, sticky="nw") # Adjusted row
         self.status_text = scrolledtext.ScrolledText(master, height=15, width=60, state=tk.DISABLED)
-        self.status_text.grid(row=9, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
+        self.status_text.grid(row=10, column=0, columnspan=3, padx=5, pady=5, sticky="nsew") # Adjusted row
 
         # --- Grid Configuration ---
         master.grid_columnconfigure(1, weight=1)
-        master.grid_rowconfigure(9, weight=1)
+        master.grid_rowconfigure(10, weight=1) # Adjusted row
+
 
         # --- Crawler State ---
         self.visited_urls = set()
@@ -111,6 +149,22 @@ class RobotsTxtCrawlerGUI:
         self.session = None # aiohttp ClientSession
         self.robots_cache = {} # To store parsed robots.txt for each domain
         self.crawler_task = None # To hold the main asyncio crawling task
+
+        # --- Data Collection ---
+        self.collected_data = {} # Dictionary to store data per URL
+        # Instance variables to store checkbox states during a crawl
+        self.collect_h2 = True
+        self.collect_h3 = True
+        self.collect_paragraphs = False
+        self.collect_images = True
+        self.collect_forms = True
+        self.collect_comments = False
+        self.collect_meta_tags = True
+        self.collect_script_sources = True
+        self.collect_stylesheet_sources = True
+        self.collect_canonical_url = True
+        self.collect_favicon_urls = True
+
 
         # --- Asyncio Integration ---
         self.loop = asyncio.new_event_loop()
@@ -128,9 +182,11 @@ class RobotsTxtCrawlerGUI:
             os.makedirs(directory, exist_ok=True) # Ensure directory exists
 
     def normalize_url(self, url):
-        """Adds a scheme (https) if missing from the URL."""
+        """Adds a scheme (https) if missing from the URL and removes fragments."""
         if not re.match(r'^[a-zA-Z]+://', url):
-            return 'https://' + url # Default to https
+            url = 'https://' + url # Default to https
+        # Remove fragment identifiers
+        url, _ = urldefrag(url)
         return url
 
     def start_crawl(self):
@@ -177,6 +233,21 @@ class RobotsTxtCrawlerGUI:
         self.output_directory = self.output_dir_var.get()
         os.makedirs(self.output_directory, exist_ok=True) # Ensure output directory exists
 
+        # --- Store checkbox states for this crawl ---
+        self.collect_h2 = self.collect_h2_var.get()
+        self.collect_h3 = self.collect_h3_var.get()
+        self.collect_paragraphs = self.collect_paragraphs_var.get()
+        self.collect_images = self.collect_images_var.get()
+        self.collect_forms = self.collect_forms_var.get()
+        self.collect_comments = self.collect_comments_var.get()
+        self.collect_meta_tags = self.collect_meta_tags_var.get()
+        self.collect_script_sources = self.collect_script_sources_var.get()
+        self.collect_stylesheet_sources = self.collect_stylesheet_sources_var.get()
+        self.collect_canonical_url = self.collect_canonical_url_var.get()
+        self.collect_favicon_urls = self.collect_favicon_urls_var.get()
+        # -------------------------------------------
+
+
         self.visited_urls = set()
         # Add the starting URL to the queue with depth 0
         self.queue = [(start_url, 0)]
@@ -187,9 +258,11 @@ class RobotsTxtCrawlerGUI:
         self.progress["maximum"] = 0 # Will be updated as we go, set to 0 initially
 
         self.robots_cache = {}
+        self.collected_data = {} # Reset collected data for a new crawl
+
         self.log_message(f"Starting crawl from: {start_url} with depth: {depth_str} and delay: {self.delay:.2f} seconds.")
         self.log_message(f"User-Agent: {self.user_agent}")
-        self.log_message(f"Saving robots.txt files to: {self.output_directory}")
+        self.log_message(f"Saving data to: {self.output_directory}")
 
         # Start the asyncio loop integrated with Tkinter
         self.asyncio_integrator.run()
@@ -210,10 +283,13 @@ class RobotsTxtCrawlerGUI:
         try:
             task.result() # Check for exceptions
             self.log_message("Crawl finished.")
+            self.master.after_idle(self.save_collected_data) # Save data after crawl finishes
         except asyncio.CancelledError:
              self.log_message("Crawl stopped.")
+             self.master.after_idle(self.save_collected_data) # Save data even if stopped
         except Exception as e:
             self.log_message(f"Crawl finished with an error: {e}")
+            self.master.after_idle(self.save_collected_data) # Attempt to save data on error
         finally:
             # Schedule GUI cleanup in the Tkinter thread
             self.master.after_idle(self.finish_crawl)
@@ -299,9 +375,12 @@ class RobotsTxtCrawlerGUI:
                     self.log_message(f" robots.txt disallows crawling: {current_url}")
                     continue # Skip disallowed URLs
 
-                # Crawl the URL to find more links (if within depth limit)
+                # Crawl the URL to find more links and collect data
                 if current_depth < self.crawl_depth_limit:
-                     url, new_links = await self.crawl_url_async(current_url, current_depth)
+                     url, new_links, page_data = await self.crawl_url_and_collect_data_async(current_url, current_depth)
+
+                     if url and page_data:
+                         self.collected_data[url] = page_data # Store collected data
 
                      if url and new_links:
                          for link, depth in new_links:
@@ -336,11 +415,12 @@ class RobotsTxtCrawlerGUI:
              self.progress["maximum"] = maximum
 
 
-    async def crawl_url_async(self, url, depth):
+    async def crawl_url_and_collect_data_async(self, url, depth):
         # This function runs in the asyncio event loop
         parsed_url = urlparse(url)
         domain = parsed_url.netloc
         new_links = []
+        page_data = None # Initialize page_data
 
         self.log_message(f"Crawling: {url} (Depth: {depth})")
 
@@ -352,22 +432,130 @@ class RobotsTxtCrawlerGUI:
                 if 'text/html' in content_type:
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
-                    for link in soup.find_all('a', href=True):
-                        href = link['href']
-                        absolute_url = urljoin(url, href)
-                        # Remove fragment identifiers
-                        absolute_url, _ = urldefrag(absolute_url)
-                        # Only add links within the same domain for this simple crawler
-                        # and if they haven't been visited or queued
-                        link_domain = urlparse(absolute_url).netloc
-                        if link_domain == domain: # Only follow links on the same domain
-                             new_links.append((absolute_url, depth + 1))
-                return url, new_links
+
+                    # --- Data Extraction ---
+                    title = soup.title.string if soup.title else "No title"
+
+                    # Extract and normalize all links on the page
+                    all_links_on_page = [link.get('href') for link in soup.find_all('a', href=True)]
+                    normalized_links_on_page = []
+                    for link in all_links_on_page:
+                        if link:
+                            try:
+                                absolute_url = urljoin(url, link)
+                                normalized_link, _ = urldefrag(absolute_url)
+                                link_domain = urlparse(normalized_link).netloc
+                                # Only consider links on the same domain for adding to the queue
+                                if link_domain == domain:
+                                     normalized_links_on_page.append(normalized_link)
+                            except Exception as e:
+                                self.log_message(f"Error processing link {link} from {url}: {e}")
+
+                    # Get unique links on the same domain to add to the queue
+                    new_links = [(link, depth + 1) for link in set(normalized_links_on_page)]
+
+
+                    # Extract other data points based on checkbox selection
+                    page_data = {
+                        'url': url,
+                        'depth': depth,
+                        'title': title,
+                        'links_on_page': list(set(normalized_links_on_page)), # Always collect main links
+                    }
+
+                    meta_description = soup.find('meta', attrs={'name': 'description'})
+                    page_data['meta_description'] = meta_description['content'] if meta_description else "No description"
+
+                    if self.collect_h2:
+                        page_data['h2_tags'] = [h2.text for h2 in soup.find_all('h2')]
+                    if self.collect_h3:
+                        page_data['h3_tags'] = [h3.text for h3 in soup.find_all('h3')]
+                    # Always collect H1 tags as they are fundamental
+                    page_data['h1_tags'] = [h1.text for h1 in soup.find_all('h1')]
+
+
+                    if self.collect_paragraphs:
+                        page_data['paragraphs'] = [p.text for p in soup.find_all('p')]
+
+                    if self.collect_images:
+                        images_data = []
+                        for img in soup.find_all('img'):
+                            img_src = img.get('src')
+                            img_alt = img.get('alt', 'No alt text')
+                            if img_src:
+                                 img_url = urljoin(url, img_src)
+                                 images_data.append({'src': img_url, 'alt': img_alt})
+                        page_data['images'] = images_data
+
+                    if self.collect_forms:
+                        forms_data = []
+                        for form in soup.find_all('form'):
+                            form_action = form.get('action')
+                            form_method = form.get('method', 'GET').upper()
+                            input_fields = []
+                            for input_tag in form.find_all(['input', 'textarea', 'select']):
+                                input_fields.append({
+                                    'tag': input_tag.name,
+                                    'type': input_tag.get('type'),
+                                    'name': input_tag.get('name'),
+                                    'id': input_tag.get('id'),
+                                    'value': input_tag.get('value'),
+                                    'placeholder': input_tag.get('placeholder')
+                                })
+                            forms_data.append({
+                                'action': urljoin(url, form_action) if form_action else None,
+                                'method': form_method,
+                                'inputs': input_fields
+                            })
+                        page_data['forms'] = forms_data
+
+                    if self.collect_comments:
+                        page_data['comments'] = [comment.string for comment in soup.find_all(string=lambda text: isinstance(text, Comment))]
+
+                    if self.collect_meta_tags:
+                        meta_tags_data = []
+                        for meta in soup.find_all('meta'):
+                            meta_name = meta.get('name')
+                            meta_property = meta.get('property')
+                            meta_content = meta.get('content')
+                            if meta_name or meta_property:
+                                meta_tags_data.append({
+                                    'name': meta_name,
+                                    'property': meta_property,
+                                    'content': meta_content
+                                })
+                        page_data['meta_tags'] = meta_tags_data
+
+                    if self.collect_script_sources:
+                        page_data['script_sources'] = [script.get('src') for script in soup.find_all('script', src=True)]
+
+                    if self.collect_stylesheet_sources:
+                        page_data['stylesheet_sources'] = [link.get('href') for link in soup.find_all('link', rel='stylesheet', href=True)]
+
+                    if self.collect_canonical_url:
+                        canonical_link = soup.find('link', rel='canonical')
+                        canonical_url = canonical_link.get('href') if canonical_link else None
+                        if canonical_url:
+                             canonical_url = urljoin(url, canonical_url)
+                        page_data['canonical_url'] = canonical_url
+
+                    if self.collect_favicon_urls:
+                        favicon_links = soup.find_all('link', rel=['icon', 'shortcut icon'])
+                        favicon_urls = [urljoin(url, link.get('href')) for link in favicon_links if link.get('href')]
+                        page_data['favicon_urls'] = favicon_urls
+
+
+                    return url, new_links, page_data
+
+                else:
+                     self.log_message(f"Skipping non-HTML content at {url} (Content-Type: {content_type})")
+                     return url, [], None
+
         except aiohttp.ClientError as e:
             self.log_message(f"Error fetching {url}: {e}")
         except Exception as e:
             self.log_message(f"Unexpected error processing {url}: {e}")
-        return None, []
+        return None, [], None
 
     async def fetch_robots_txt_async(self, domain):
         # This function runs in the asyncio event loop
@@ -478,6 +666,28 @@ class RobotsTxtCrawlerGUI:
         self.status_text.insert(tk.END, message + "\n")
         self.status_text.see(tk.END)  # Scroll to the bottom
         self.status_text.config(state=tk.DISABLED)
+
+    def save_collected_data(self):
+        # This function runs in the Tkinter mainloop
+        if not self.collected_data:
+            self.log_message("No data collected to save.")
+            return
+
+        output_file = os.path.join(self.output_directory, "collected_web_data.json")
+
+        try:
+            os.makedirs(self.output_directory, exist_ok=True) # Ensure directory exists
+            # Convert dictionary values to a list of data entries for easier processing later
+            data_to_save = list(self.collected_data.values())
+
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(data_to_save, f, indent=4, ensure_ascii=False)
+            self.log_message(f"All collected data saved to {output_file}")
+        except IOError as e:
+            self.log_message(f"Error saving collected data to {output_file}: {e}")
+        except Exception as e:
+            self.log_message(f"Unexpected error saving collected data: {e}")
+
 
     def on_closing(self):
         """Handle window closing event."""
